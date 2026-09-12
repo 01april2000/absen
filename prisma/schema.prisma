@@ -1,0 +1,255 @@
+// Prisma schema untuk Aplikasi Absen Siswa
+// DATABASE_URL dikonfigurasi di prisma7.config.ts (via .env)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Hari {
+  Senin
+  Selasa
+  Rabu
+  Kamis
+  Jumat
+  Sabtu
+  Minggu
+}
+
+enum StatusAbsensi {
+  Hadir
+  Terlambat
+  Alpha
+}
+
+enum Role {
+  Admin
+  Guru
+}
+
+enum JenisIzin {
+  Izin
+  Sakit
+}
+
+enum StatusIzin {
+  Menunggu
+  Disetujui
+  Ditolak
+}
+
+enum StatusTitipTugas {
+  Menunggu
+  Disetujui
+  Ditolak
+}
+
+model Mapel {
+  id         Int    @id @default(autoincrement())
+  nama_mapel String
+  kode_mapel String
+
+  guru    Guru[]
+  jadwal  Jadwal[]
+  absensi Absensi[]
+}
+
+model Guru {
+  id       Int    @id @default(autoincrement())
+  username String? @unique
+  nama     String
+
+  authUserId String? @unique
+
+  authUser User?   @relation(fields: [authUserId], references: [id], onDelete: SetNull)
+  mapel    Mapel[]
+  jadwal   Jadwal[]
+  izin     Izin[]
+  titipTugas TitipTugas[]
+}
+
+model Jadwal {
+  id          Int     @id @default(autoincrement())
+  mapel_id    Int?
+  guru_id     Int?
+  kelas_id    Int?
+  hari        Hari?
+  jam_mulai   String?
+  jam_selesai String?
+
+  mapel   Mapel?    @relation(fields: [mapel_id], references: [id])
+  guru    Guru?     @relation(fields: [guru_id], references: [id])
+  kelas   Kelas?    @relation(fields: [kelas_id], references: [id])
+  absensi Absensi[]
+  titipTugas TitipTugas[]
+
+  @@index([mapel_id])
+  @@index([guru_id])
+  @@index([kelas_id])
+}
+
+model Kelas {
+  id         Int     @id @default(autoincrement())
+  nama_kelas String
+
+  siswa  Siswa[]
+  jadwal Jadwal[]
+  titipTugas TitipTugas[]
+}
+
+model Izin {
+  id         Int       @id @default(autoincrement())
+  guru_id    Int
+  jenis      JenisIzin
+  tanggal    DateTime
+  keterangan String?
+  status     StatusIzin @default(Menunggu)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  guru Guru @relation(fields: [guru_id], references: [id], onDelete: Cascade)
+  titipTugas TitipTugas[]
+
+  @@index([guru_id])
+}
+
+model TitipTugas {
+  id        Int              @id @default(autoincrement())
+  izin_id   Int
+  guru_id   Int
+  kelas_id  Int
+  jadwal_id Int
+  konten    String
+  status    StatusTitipTugas @default(Menunggu)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  izin   Izin   @relation(fields: [izin_id], references: [id], onDelete: Cascade)
+  guru   Guru   @relation(fields: [guru_id], references: [id], onDelete: Cascade)
+  kelas  Kelas  @relation(fields: [kelas_id], references: [id], onDelete: Cascade)
+  jadwal Jadwal @relation(fields: [jadwal_id], references: [id], onDelete: Cascade)
+
+  @@index([izin_id])
+  @@index([guru_id])
+  @@index([kelas_id])
+  @@index([jadwal_id])
+}
+
+model Device {
+  id        Int      @id @default(autoincrement())
+  deviceId  String   @unique
+  name      String?
+  location  String?
+  apiKey    String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  absensi Absensi[]
+
+  @@index([apiKey])
+}
+
+model Siswa {
+  id       Int     @id @default(autoincrement())
+  nis      String  @unique
+  nama     String
+  rfid_uid String? @unique
+  kelas_id Int?
+  isActive Boolean @default(true)
+
+  kelas   Kelas?    @relation(fields: [kelas_id], references: [id])
+  absensi Absensi[]
+}
+
+model Absensi {
+  id        Int            @id @default(autoincrement())
+  siswa_id  Int?
+  mapel_id  Int?
+  jadwal_id Int?
+  device_id Int?
+  event_id  String?        @unique
+  tanggal   DateTime?
+  jam       String?
+  status    StatusAbsensi?
+
+  siswa  Siswa?  @relation(fields: [siswa_id], references: [id])
+  mapel  Mapel?  @relation(fields: [mapel_id], references: [id])
+  jadwal Jadwal? @relation(fields: [jadwal_id], references: [id])
+  device Device? @relation(fields: [device_id], references: [id])
+
+  @@index([siswa_id])
+  @@index([mapel_id])
+  @@index([jadwal_id])
+  @@index([device_id])
+  @@index([tanggal])
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          Role      @default(Guru)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  guru          Guru?
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}

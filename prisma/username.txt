@@ -1,0 +1,4 @@
+Email,Peran,Password
+admin@sekolah.ac.id,Admin,admin12345
+budi.santoso@sekolah.ac.id,Guru,password123
+... +7 guru lain,Guru,password123
