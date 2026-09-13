@@ -48,7 +48,16 @@
  *    3. Buka portal (biasanya otomatis muncul, atau buka http://192.168.4.1).
  *    4. Isi: nama WiFi (SSID), password, API URL, Device ID, API Key.
  *    5. Save -> Wemos reboot, connect WiFi, mulai baca RFID.
- *  Untuk ubah konfigurasi lagi: tombol RESET ditekan lama (GPIO reset).
+ *  Untuk ubah konfigurasi lagi: tahan tombol BOOT (GPIO0) 3 detik
+ *  setelah LCD menyala, Wemos akan reset konfigurasi lalu restart ->
+ *  portal "Absensi-Config" muncul lagi. (JANGAN tahan BOOT sambil
+ *  menekan tombol RESET, itu masuk mode download/flash.)
+ *
+ *  Jika kolom API URL/API Key di portal tidak bisa diketik (karena
+ *  autofill captive portal HP), pakai SERIAL MONITOR:
+ *  ketik "CFG" + Enter, lalu isi per baris:
+ *    URL:<api url>   DEV:<device id>   KEY:<api key>
+ *    SAVE (simpan & restart)  atau  EXIT (batal)
  * ------------------------------------------------------------
  *  API YANG DIPANGGIL:
  *    POST <API_URL>
@@ -85,43 +94,94 @@
 // LED onboard Wemos D1 R32 (indikator proses, opsional)
 #define LED_PIN 2
 
+// Tombol BOOT onboard (GPIO0, aktif-LOW) utk reset konfigurasi.
+// Tahan 3 detik sats loop berjalan -> hapus WiFi+config -> restart.
+#define CONFIG_BTN_PIN 0
+#define RESET_HOLD_MS 3000
+
 // LCD 16x2 I2C (alamat 0x27 atau 0x3F — coba ganti jika blank)
 #define LCD_ADDR 0x27
 #define LCD_COLS 16
 #define LCD_ROWS 2
 
 // RC522 via SPI (SPI class milik ESP32 sudah menyediakan GPIO 18/19/23)
-#define RST_PIN 4   // Wemos D4
-#define SS_PIN  5   // Wemos D8
+#define RST_PIN 4  // Wemos D4
+#define SS_PIN 5   // Wemos D8
 
 MFRC522 rc522(SS_PIN, RST_PIN);
 
 // Label default tampilan dari WiFiManager undangan
 const char* WM_AP_NAME = "Absensi-Config";
 
-// Parameter custom WiFiManager (disimpan di NVS oleh library)
-WiFiManagerParameter customApiUrl("apiUrl", "API URL (https://.../api/attendance)", "", 160);
-WiFiManagerParameter customDeviceId("deviceId", "Device ID (contoh: ABSEN-01)", "ABSEN-01", 40);
-WiFiManagerParameter customApiKey("apiKey", "API Key (dari admin)", "", 80);
+// Paksa skema warna terang pada halaman portal WiFiManager.
+// Mencegah teks input tak terlihat saat HP dalam mode gelap
+// (bug umum WiFiManager 2.x: label tampak tapi ketikan tak terlihat,
+// karena browser WebKit mengecat teks input via -webkit-text-fill-color).
+// Ditambah script yang menyetel warna secara eksplisit setelah halaman
+// dimuat, jadi hasilnya konsisten di Chrome/Edge/Safari.
+const char* WM_HEAD_LIGHT =
+  "<meta name='color-scheme' content='light'>"
+  "<style>"
+  "html,body{background:#fff!important;color:#000!important;color-scheme:light}"
+  "input,select,textarea{color:#000!important;-webkit-text-fill-color:#000!important;"
+  "caret-color:#000!important;background:#fff!important;color-scheme:light;"
+  "border:1px solid #999;}"
+  "</style>"
+  "<script>"
+  "window.addEventListener('load',function(){"
+  "var f=document.querySelectorAll('form');"
+  "for(var j=0;j<f.length;j++)f[j].setAttribute('autocomplete','off');"
+  "var e=document.querySelectorAll('input');"
+  "for(var i=0;i<e.length;i++){"
+  "e[i].style.color='#000';e[i].style.webkitTextFillColor='#000';"
+  "e[i].style.caretColor='#000';e[i].style.background='#fff';"
+  "}"
+  "});"
+  "</script>";
+
+// Parameter custom WiFiManager (disimpan di NVS oleh library).
+// CATATAN: nama field (arg pertama) sengaja dibuat NETRAL ("endpt",
+// "devid", "sig") BUKAN "apiUrl"/"apiKey". Browser (Chrome/Android,
+// captive portal) mengambil alih input yang namanya mengandung "url",
+// "key", "password" utk autofill sehingga KEYBOARD TIDAK BISA DIPAKAI.
+// Autocomplete/autocapitalize dimatikan supaya ketikan normal.
+WiFiManagerParameter customApiUrl("endpt", "API URL (https://.../api/attendance)", "", 160,
+                                  "type='text' size='34' autocomplete='off' autocorrect='off' "
+                                  "autocapitalize='none' spellcheck='false' "
+                                  "data-form-type='other' data-lpignore='true'");
+WiFiManagerParameter customDeviceId("devid", "Device ID (contoh: ABSEN-01)", "ABSEN-01", 40,
+                                    "type='text' size='34' autocomplete='off' autocorrect='off' "
+                                    "autocapitalize='none' spellcheck='false' "
+                                    "data-form-type='other' data-lpignore='true'");
+WiFiManagerParameter customApiKey("sig", "API Key (dari admin)", "absen_affe7824221346798f8552e0eb7ce1e3", 80,
+                                  "type='text' size='34' autocomplete='off' autocorrect='off' "
+                                  "autocapitalize='none' spellcheck='false' "
+                                  "data-form-type='other' data-lpignore='true'");
 
 // NVS (flash) untuk menyimpan konfigurasi & antrean offline
 Preferences prefs;
 
 // Batas & waktu
-#define HTTP_TIMEOUT_MS  10000     // timeout tiap request
-#define MAX_RETRY        3         // percobaan kirim saat online
-#define DEBOUNCE_MS      5000      // abaikan kartu sama dalam 5 detik
-#define DISPLAY_MS       3000      // lama pesan LCD ditampilkan
-#define QUEUE_MAX        20        // maks antrean offline
-#define Q_NAMESPACE      "absenq"  // namespace Preferences utk antrean
+#define HTTP_TIMEOUT_MS 10000  // timeout tiap request
+#define MAX_RETRY 3            // percobaan kirim saat online
+#define DEBOUNCE_MS 5000       // abaikan kartu sama dalam 5 detik
+#define DISPLAY_MS 3000        // lama pesan LCD ditampilkan
+#define QUEUE_MAX 20           // maks antrean offline
+#define Q_NAMESPACE "absenq"   // namespace Preferences utk antrean
+#define SERIAL_IDLE_MS 400     // jika sudah lama tanpa ketikan, proses baris walau tak ada Enter
 
 // Variabel runtime
-String apiUrl   = "";
+String apiUrl = "";
 String deviceId = "";
-String apiKey   = "";
-String lastUid  = "";
+String apiKey = "";
+String wifiSsid = "";
+String wifiPass = "";
+String lastUid = "";
 unsigned long lastTapMs = 0;
 unsigned long lastMsgMs = 0;
+unsigned long btnPressMs = 0;
+String serialCfgBuf = "";
+unsigned long serialLastByteMs = 0;
 
 // Sequence counter unik lintas reboot (disimpan di NVS)
 uint32_t eventSeq = 0;
@@ -152,13 +212,120 @@ void saveConfig() {
   prefs.putString("apiUrl", apiUrl);
   prefs.putString("deviceId", deviceId);
   prefs.putString("apiKey", apiKey);
+  prefs.putString("wifiSsid", wifiSsid);
+  prefs.putString("wifiPass", wifiPass);
 }
 
 void loadConfig() {
-  apiUrl   = prefs.getString("apiUrl", "");
+  apiUrl = prefs.getString("apiUrl", "");
   deviceId = prefs.getString("deviceId", "ABSEN-01");
-  apiKey   = prefs.getString("apiKey", "");
+  apiKey = prefs.getString("apiKey", "");
+  wifiSsid = prefs.getString("wifiSsid", "");
+  wifiPass = prefs.getString("wifiPass", "");
   eventSeq = prefs.getUInt("seq", 0);
+}
+
+/* ============================================================
+ *  SERIAL CONFIG (alternatif andal saat portal HP bermasalah)
+ *  Ketik "CFG" (tanpa tanda kutip) di Serial Monitor lalu Enter.
+ *  Setelah itu isi per baris:
+ *    URL:<api url>       DEV:<device id>       KEY:<api key>
+ *    SSID:<nama wifi>    PASS:<password wifi>
+ *    SAVE   -> simpan & restart
+ *    EXIT   -> batal
+ *  WiFi (SSID/PASS) BISA diatur lewat sini — tidak wajib lewat portal.
+ * ============================================================ */
+
+// Proses satu baris perintah config. Mengembalikan true jika harus
+// KELUAR dari serialConfigure (perintah EXIT). SAVE langsung restart.
+bool handleConfigLine(String line) {
+  line.trim();
+  if (line.length() == 0) return false;
+
+  if (line.startsWith("URL:")) {
+    apiUrl = line.substring(4);
+    apiUrl.trim();
+    saveConfig();
+    Serial.println("Oke. URL diset.");
+    lcdPrint("URL", apiUrl.substring(0, 14));
+  } else if (line.startsWith("DEV:")) {
+    deviceId = line.substring(4);
+    deviceId.trim();
+    saveConfig();
+    Serial.println("Oke. DEV diset.");
+    lcdPrint("Device ID", deviceId.substring(0, 14));
+  } else if (line.startsWith("KEY:")) {
+    apiKey = line.substring(4);
+    apiKey.trim();
+    saveConfig();
+    Serial.println("Oke. KEY diset.");
+    lcdPrint("API Key", apiKey.substring(0, 14) + "..");
+  } else if (line.startsWith("SSID:")) {
+    wifiSsid = line.substring(5);
+    wifiSsid.trim();
+    saveConfig();
+    Serial.println("Oke. SSID diset.");
+    lcdPrint("WiFi SSID", wifiSsid.substring(0, 14));
+  } else if (line.startsWith("PASS:")) {
+    wifiPass = line.substring(5);
+    wifiPass.trim();
+    saveConfig();
+    Serial.println("Oke. PASS diset.");
+    lcdPrint("WiFi PASS", "Tersimpan..");
+  } else if (line.equalsIgnoreCase("SAVE")) {
+    if (apiUrl.isEmpty()) apiUrl = "https://absen-azure.vercel.app/api/attendance";
+    saveConfig();
+    Serial.println("Tersimpan. Restart...");
+    lcdPrint("Tersimpan", "Restart...");
+    delay(1500);
+    ESP.restart();
+  } else if (line.equalsIgnoreCase("EXIT")) {
+    Serial.println("Batal. Kembali ke operasi normal.");
+    lcdPrint("Batal", "Lanjut Normal");
+    delay(1000);
+    return true;
+  } else {
+    Serial.println("Perintah tak dikenal. Pakai URL:/DEV:/KEY:/SSID:/PASS:/SAVE/EXIT");
+  }
+  return false;
+}
+
+void serialConfigure() {
+  lcdPrint("Serial Config", "URL DEV KEY WI");
+  Serial.println();
+  Serial.println("=== SERIAL CONFIG ===");
+  Serial.println("Kirim per baris lalu Enter:");
+  Serial.println("  URL:<api url>");
+  Serial.println("  DEV:<device id>");
+  Serial.println("  KEY:<api key>");
+  Serial.println("  SSID:<nama wifi>");
+  Serial.println("  PASS:<password wifi>");
+  Serial.println("  SAVE  -> simpan & restart");
+  Serial.println("  EXIT  -> batal tanpa simpan");
+  String buf = "";
+  unsigned long lastByteMs = 0;
+  while (true) {
+    while (Serial.available()) {
+      char c = (char)Serial.read();
+      if (c == '\n' || c == '\r') {
+        lastByteMs = 0;
+        String line = buf;
+        buf = "";
+        if (handleConfigLine(line)) return;
+      } else {
+        buf += c;
+        lastByteMs = millis();
+      }
+    }
+    // Proses baris meski tanpa Enter (mis. paste teks di monitor non-Arduino)
+    if (buf.length() > 0 && lastByteMs != 0 && (millis() - lastByteMs) > SERIAL_IDLE_MS) {
+      String line = buf;
+      buf = "";
+      lastByteMs = 0;
+      if (handleConfigLine(line)) return;
+    }
+    delay(20);
+  }
 }
 
 // --- Antrean offline (event sementara jika internet mati) ---
@@ -200,19 +367,63 @@ void queueClear() {
 }
 
 /* ============================================================
+ *  RESET KONFIGURASI (tombol BOOT tahan 3 detik)
+ *  Hanya dicek di dalam loop(), bukan saat boot, supaya tidak
+ *  bertabrakan dengan mode download/flash ESP32 (GPIO0 low saat
+ *  reset = masuk mode flashing).
+ * ============================================================ */
+
+void checkConfigResetButton() {
+  if (digitalRead(CONFIG_BTN_PIN) == LOW) {
+    if (btnPressMs == 0) btnPressMs = millis();
+    if (millis() - btnPressMs >= RESET_HOLD_MS) {
+      WiFiManager wm;
+      wm.resetSettings();  // hapus SSID/password WiFi tersimpan
+      prefs.clear();       // hapus apiUrl/deviceId/apiKey + antrean
+      lcdPrint("Konfigurasi", "Direset...");
+      delay(1500);
+      ESP.restart();  // boot ulang -> portal Absensi-Config muncul
+    }
+  } else {
+    btnPressMs = 0;
+  }
+}
+
+/* ============================================================
  *  WIFIMANAGER SETUP
  * ============================================================ */
 
 void setupWifi() {
   WiFi.mode(WIFI_STA);
 
+  // Jika SSID+password disimpan via "CFG" (serial), coba sambung LANGSUNG
+  // tanpa portal. Berguna saat captive portal di HP susah dipakai.
+  if (!wifiSsid.isEmpty()) {
+    Serial.printf("WiFi: menyambung ke '%s' (config serial)...\n", wifiSsid.c_str());
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 20000) {
+      delay(200);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi tersambung (config serial).");
+      return;
+    }
+    Serial.println("WiFi gagal konek pakai config serial. Buka portal...");
+  }
+
   WiFiManager wm;
-  wm.setConfigPortalTimeout(180);        // portal otomatis tutup setelah 3 menit
+
+  // Sisipkan CSS pemaksa skema terang agar teks input selalu terlihat
+  // (terutama saat portal dibuka dari HP dalam mode gelap).
+  wm.setCustomHeadElement(WM_HEAD_LIGHT);
+
+  wm.setConfigPortalTimeout(180);  // portal otomatis tutup setelah 3 menit
   wm.setSaveConfigCallback([]() {
     // Ambil nilai parameter custom setelah user menekan Save
-    apiUrl   = String(customApiUrl.getValue());
+    apiUrl = String(customApiUrl.getValue());
     deviceId = String(customDeviceId.getValue());
-    apiKey   = String(customApiKey.getValue());
+    apiKey = String(customApiKey.getValue());
     saveConfig();
   });
 
@@ -228,13 +439,19 @@ void setupWifi() {
 
   // Coba connect dari SSID tersimpan; jika gagal -> buat AP "Absensi-Config"
   if (!wm.autoConnect(WM_AP_NAME)) {
-    // 3 menit tanpa input -> reset device agar dicoba lagi
+    // Portal habis tanpa input -> reset device agar dicoba lagi
     ESP.restart();
   }
 
+  // Simpan SSID/password yang berhasil diconnect portal utk boot berikutnya,
+  // jadi ke depannya tidak perlu portal lagi.
+  wifiSsid = WiFi.SSID();
+  wifiPass = WiFi.psk();
+  saveConfig();
+
   // Jika API URL kosong (belum pernah diisi lewat portal), isi default
   if (apiUrl.isEmpty()) {
-    apiUrl = "http://localhost:3000/api/attendance";
+    apiUrl = "https://absen-azure.vercel.app/api/attendance";
     saveConfig();
   }
 }
@@ -401,13 +618,21 @@ void processCard(String uid) {
 void setup() {
   Serial.begin(115200);
   Serial.println("=== ABSENSI RFID START ===");
+  Serial.println("Serial Monitor: 115200 baud. Line Ending: 'Newline' atau 'Both NL & CR'.");
+  Serial.println("Ketik 'CFG' lalu Enter untuk ubah konfigurasi (URL:/DEV:/KEY:/SSID:/PASS:/SAVE).");
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  pinMode(CONFIG_BTN_PIN, INPUT_PULLUP);
 
   // NVS
   prefs.begin(Q_NAMESPACE, false);
   loadConfig();
+
+  // Bersihkan buffer serial dari sampah sisa boot/UART noise
+  serialCfgBuf = "";
+  serialLastByteMs = 0;
+  while (Serial.available()) Serial.read();
 
   // LCD
   Wire.begin(21, 22);  // SDA=GPIO21 (D2), SCL=GPIO22 (D1)
@@ -415,16 +640,72 @@ void setup() {
   lcd.backlight();
   lcdPrint("Menyala...", "WiFiManager...");
 
-  // WiFi (WiFiManager)
+  // Jika belum ada WiFi tersimpan, loop() tidak akan pernah sempat memproses
+  // "CFG" (setupWifi() membuka portal lama lalu restart). Karena itu beri
+  // jendela input serial di sini supaya SSID/PASS/URL/DEV/KEY bisa diisi
+  // langsung dari Serial Monitor tanpa perlu portal.
+  if (wifiSsid.isEmpty()) {
+    Serial.println("Belum ada WiFi tersimpan. Pilih salah satu:");
+    Serial.println("  (1) Isi lewat serial, mis. ketik: SSID:nama_wifi  lalu  PASS:password  lalu  SAVE");
+    Serial.println("  (2) Tunggu AP 'Absensi-Config' lalu isi lewat portal (http://192.168.4.1).");
+    Serial.println("Menunggu input serial 25 detik...");
+    String buf = "";
+    unsigned long lastByteMs = 0;
+    unsigned long t0 = millis();
+    bool exited = false;
+    while (!exited && (millis() - t0) < 25000) {
+      while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\n' || c == '\r') {
+          lastByteMs = 0;
+          String line = buf;
+          buf = "";
+          line.trim();
+          if (line.equalsIgnoreCase("CFG")) {
+            serialConfigure();  // menu penuh; ketik EXIT utk lanjut boot
+          } else if (handleConfigLine(line)) {
+            exited = true;
+            break;
+          }
+        } else {
+          buf += c;
+          lastByteMs = millis();
+        }
+      }
+      if (!exited && buf.length() > 0 && lastByteMs != 0 && (millis() - lastByteMs) > SERIAL_IDLE_MS) {
+        String line = buf;
+        buf = "";
+        lastByteMs = 0;
+        line.trim();
+        if (line.equalsIgnoreCase("CFG")) {
+          serialConfigure();
+        } else if (handleConfigLine(line)) {
+          exited = true;
+        }
+      }
+      delay(20);
+    }
+  }
+
+  // WiFi (WiFiManager). Jika config serial sudah menyediakan SSID/PASS,
+  // setupWifi() menyambungkan langsung; jika tidak, portal dibuka.
+  Serial.println("WiFi: mencoba koneksi...");
   setupWifi();
-  Serial.print("IP: ");
+  Serial.print("WiFi OK, IP: ");
   Serial.println(WiFi.localIP());
 
   // RC522
-  SPI.begin();        // SPI default ESP32: SCK=18, MISO=19, MOSI=23
+  SPI.begin();  // SPI default ESP32: SCK=18, MISO=19, MOSI=23
   rc522.PCD_Init();
-  rc522.PCD_PerformSelfTest();  // dipanggil sekali utk cek modul (hasil lewat bitAntennaAmpReg)
+  // JANGAN pakai rc522.PCD_PerformSelfTest() di sini: pada banyak modul (dan
+  // kloningan), self-test membuat reader keluar dari mode baca dan kartu tidak
+  // terdeteksi lagi sampai di-init ulang. Pakai urutan standar sebagai ganti.
+  rc522.PCD_SetAntennaGain(rc522.RxGain_max);  // maksimalkan antena (kloningan sering lemah)
   rc522.PCD_AntennaOn();
+  // Diagnostik: cek byte versi firmware lewat Serial Monitor (115200 baud).
+  // 0x92/0x95/0x96/0x97 = MFRC522 normal => SPI & wiring benar.
+  // 0x00/0xFF/garbage    => kabel SPI belum benar (cek SDA/SCK/MOSI/MISO/RST).
+  rc522.PCD_DumpVersionToSerial();
 
   // Coba kirim ulang antrean offline dari sesi sebelumnya
   int sent = flushQueue();
@@ -444,6 +725,42 @@ void setup() {
  * ============================================================ */
 
 void loop() {
+  // 0) Reset konfigurasi via tombol BOOT tahan 3 detik (dicek duluan)
+  checkConfigResetButton();
+
+  // 0b) Konfigurasi via Serial Monitor: ketik "CFG" lalu Enter.
+  //     Baris diakumulasi lintas iterasi supaya tidak rawan terpotong.
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    // Terminator boleh '\n' ATAU '\r' supaya semua mode Line Ending Serial
+    // Monitor jalan: "Newline", "Carriage return", maupun "Both NL & CR".
+    if (c == '\n' || c == '\r') {
+      serialLastByteMs = 0;
+      String line = serialCfgBuf;
+      serialCfgBuf = "";
+      line.trim();
+      if (line.equalsIgnoreCase("CFG")) {
+        serialConfigure();
+      }
+    } else {
+      serialCfgBuf += c;
+      serialLastByteMs = millis();
+    }
+  }
+
+  // Jeda ketikan (tanpa Enter): banyak Serial Monitor lain mengirim teks tanpa
+  // newline, atau pengguna lupa Enter. Setelah SERIAL_IDLE_MS tanpa karakter
+  // baru, proses baris yang sudah terkumpul.
+  if (serialCfgBuf.length() > 0 && serialLastByteMs != 0 && (millis() - serialLastByteMs) > SERIAL_IDLE_MS) {
+    String line = serialCfgBuf;
+    serialCfgBuf = "";
+    serialLastByteMs = 0;
+    line.trim();
+    if (line.equalsIgnoreCase("CFG")) {
+      serialConfigure();
+    }
+  }
+
   // 1) Jika ada antrean & online -> coba kirim ulang secara berkala
   if (queueCount() > 0 && WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();

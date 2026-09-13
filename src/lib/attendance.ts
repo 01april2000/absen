@@ -3,6 +3,9 @@ import type { Hari } from "@/generated/prisma/enums";
 export const TIME_ZONE = "Asia/Jakarta";
 export const GRACE_MINUTES = 15;
 
+const JAKARTA_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const HARI_BY_WEEKDAY: Record<number, Hari> = {
   0: "Minggu",
   1: "Senin",
@@ -51,23 +54,31 @@ export function getJakartaParts(date: Date): JakartaParts {
 }
 
 export function getJakartaNow(): Date {
-  return jakartaDateFromMs(Date.now());
+  return new Date();
 }
 
 export function jakartaDateFromMs(ms: number): Date {
-  const p = getJakartaParts(new Date(ms));
-  return new Date(p.year, p.month - 1, p.day, p.hours, p.minutes, p.seconds);
+  return new Date(ms);
 }
 
 export function getHari(date: Date): Hari {
   const p = getJakartaParts(date);
-  const weekday = new Date(p.year, p.month - 1, p.day).getDay();
+  const weekday = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
   return HARI_BY_WEEKDAY[weekday];
+}
+
+export function getJakartaMinutes(date: Date): number {
+  const p = getJakartaParts(date);
+  return p.hours * 60 + p.minutes;
 }
 
 export function startOfJakartaDay(date: Date): Date {
   const p = getJakartaParts(date);
-  return new Date(p.year, p.month - 1, p.day);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day) - JAKARTA_OFFSET_MS);
+}
+
+export function startOfJakartaNextDay(date: Date): Date {
+  return new Date(startOfJakartaDay(date).getTime() + DAY_MS);
 }
 
 export function toMinutes(value: string): number {

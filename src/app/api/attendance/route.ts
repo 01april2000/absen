@@ -4,11 +4,13 @@ import prisma from "@/lib/prisma";
 import {
   computeStatus,
   formatJam,
+  getHari,
+  getJakartaMinutes,
   getJakartaNow,
   getJakartaParts,
-  getHari,
   jakartaDateFromMs,
   startOfJakartaDay,
+  startOfJakartaNextDay,
   toMinutes,
 } from "@/lib/attendance";
 
@@ -162,7 +164,7 @@ export async function POST(request: Request) {
   }
 
   const hari = getHari(slotDate);
-  const slotMin = slotDate.getHours() * 60 + slotDate.getMinutes();
+  const slotMin = getJakartaMinutes(slotDate);
 
   const jadwals = await prisma.jadwal.findMany({
     where: { kelas_id: siswa.kelas_id, hari },
@@ -182,11 +184,7 @@ export async function POST(request: Request) {
   }
 
   const dayStart = startOfJakartaDay(slotDate);
-  const dayEnd = new Date(
-    dayStart.getFullYear(),
-    dayStart.getMonth(),
-    dayStart.getDate() + 1
-  );
+  const dayEnd = startOfJakartaNextDay(slotDate);
   const duplicate = await prisma.absensi.findFirst({
     where: {
       siswa_id: siswa.id,
