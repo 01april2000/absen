@@ -5,6 +5,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { hashPassword } from "@better-auth/utils/password";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 
 type ActionResult = { error?: string; message?: string };
 
@@ -51,11 +52,16 @@ function formValue(formData: FormData, key: string): string | null {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
+function normalizeUsername(value: string | null | undefined): string | null | undefined {
+  if (!value) return value;
+  return value.includes("@") ? value.split("@")[0].trim() : value.trim();
+}
+
 export async function createGuru(formData: FormData): Promise<ActionResult> {
   const rawMapelIds = formData.getAll("mapel_ids");
   const parsed = guruSchema.safeParse({
     nama: formValue(formData, "nama"),
-    username: formValue(formData, "username"),
+    username: normalizeUsername(formValue(formData, "username")),
     password: formValue(formData, "password") ?? undefined,
     mapel_ids: rawMapelIds.length > 0 ? rawMapelIds : undefined,
   });
@@ -107,7 +113,7 @@ export async function updateGuru(id: number, formData: FormData): Promise<Action
   const rawMapelIds = formData.getAll("mapel_ids");
   const parsed = guruSchema.safeParse({
     nama: formValue(formData, "nama"),
-    username: formValue(formData, "username"),
+    username: normalizeUsername(formValue(formData, "username")),
     password: formValue(formData, "password") ?? undefined,
     mapel_ids: rawMapelIds.length > 0 ? rawMapelIds : undefined,
   });
@@ -123,31 +129,71 @@ export async function updateGuru(id: number, formData: FormData): Promise<Action
     return { error: "Guru tidak ditemukan" };
   }
 
-  await prisma.guru.update({
-    where: { id },
-    data: {
-      nama: parsed.data.nama,
-      username: parsed.data.username,
-      mapel: {
-        set: (parsed.data.mapel_ids ?? []).map((id) => ({ id })),
-      },
-    },
-  });
+  const email = `${parsed.data.username}@sekolah.ac.id`;
 
-  if (guru.authUserId && parsed.data.password) {
-    const credential = await prisma.account.findFirst({
-      where: { userId: guru.authUserId, providerId: "credential" },
-    });
-    if (credential) {
-      await prisma.account.update({
-        where: { id: credential.id },
-        data: { password: await hashPassword(parsed.data.password) },
+  try {
+    let authUserId = guru.authUserId;
+
+    await prisma.$transaction(async (tx) => {
+      if (!authUserId) {
+        authUserId = randomUUID();
+        await tx.user.create({
+          data: {
+            id: authUserId,
+            name: parsed.data.nama,
+            email,
+            emailVerified: true,
+            role: "Guru",
+          },
+        });
+      }
+
+      const credential = await tx.account.findFirst({
+        where: { userId: authUserId, providerId: "credential" },
       });
-    }
-    await prisma.user.update({
-      where: { id: guru.authUserId },
-      data: { name: parsed.data.nama },
+
+      if (parsed.data.password) {
+        const hashed = await hashPassword(parsed.data.password);
+        if (credential) {
+          await tx.account.update({
+            where: { id: credential.id },
+            data: { password: hashed },
+          });
+        } else {
+          await tx.account.create({
+            data: {
+              id: randomUUID(),
+              accountId: authUserId,
+              providerId: "credential",
+              userId: authUserId,
+              password: hashed,
+            },
+          });
+        }
+      }
+
+      await tx.user.update({
+        where: { id: authUserId },
+        data: { name: parsed.data.nama, email },
+      });
+
+      await tx.guru.update({
+        where: { id },
+        data: {
+          nama: parsed.data.nama,
+          username: parsed.data.username,
+          authUserId,
+          mapel: {
+            set: (parsed.data.mapel_ids ?? []).map((mapelId) => ({ id: mapelId })),
+          },
+        },
+      });
     });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return { error: "Username sudah digunakan gunakan username lain" };
+    }
+    return { error: "Gagal memperbarui data guru" };
   }
 
   revalidatePath("/admin/guru");
@@ -336,6 +382,24 @@ export async function setTitipTugasStatus(
   });
   revalidatePath("/admin/titip-tugas");
   return { message: "Status titip tugas diperbarui" };
+}
+
+export async function approveTitipTugas(id: number): Promise<ActionResult> {
+  const titip = await prisma.titipTugas.findUnique({
+    where: { id },
+    include: { izin: true },
+  });
+  if (!titip) {
+    return { error: "Data titip tugas tidak ditemukan" };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.titipTugas.update({ where: { id }, data: { status: "Disetujui" } });
+    await tx.izin.update({ where: { id: titip.izin_id }, data: { status: "Disetujui" } });
+  });
+
+  revalidatePath("/admin/titip-tugas");
+  return { message: "Tugas dan izin berhasil disetujui" };
 }
 
 export async function createDevice(formData: FormData): Promise<ActionResult> {

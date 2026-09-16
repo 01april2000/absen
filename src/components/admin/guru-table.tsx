@@ -30,6 +30,17 @@ export type GuruRow = {
   mapel: { id: number; nama_mapel: string }[];
 };
 
+const EMAIL_DOMAIN = "sekolah.ac.id";
+
+function toLoginEmail(username: string | null): string {
+  if (!username) return "";
+  return username.includes("@") ? username : `${username}@${EMAIL_DOMAIN}`;
+}
+
+function toUsername(email: string): string {
+  return email.includes("@") ? email.split("@")[0].trim() : email.trim();
+}
+
 type GuruTableProps = {
   rows: GuruRow[];
   mapelOptions: { id: number; nama_mapel: string; kode_mapel: string }[];
@@ -73,7 +84,7 @@ export function GuruTable({ rows, mapelOptions }: GuruTableProps) {
     setError(null);
     setEditing(row);
     setNama(row.nama);
-    setUsername(row.username ?? "");
+    setUsername(toLoginEmail(row.username));
     setPassword("");
     setMapelIds(new Set(row.mapel.map((m) => m.id)));
     setDialogOpen(true);
@@ -83,7 +94,7 @@ export function GuruTable({ rows, mapelOptions }: GuruTableProps) {
     e.preventDefault();
     const formData = new FormData();
     formData.set("nama", nama.trim());
-    formData.set("username", username.trim());
+    formData.set("username", toUsername(username));
     if (password) {
       formData.set("password", password);
     }
@@ -154,7 +165,7 @@ export function GuruTable({ rows, mapelOptions }: GuruTableProps) {
                 <TableRow key={row.id}>
                   <TableCell className="tabular-nums">{index + 1}</TableCell>
                   <TableCell className="font-medium">{row.nama}</TableCell>
-                  <TableCell>{row.username ?? "-"}</TableCell>
+                  <TableCell>{row.username ? toLoginEmail(row.username) : "-"}</TableCell>
                   <TableCell>
                     {row.mapel.length === 0
                       ? "-"
@@ -210,10 +221,10 @@ export function GuruTable({ rows, mapelOptions }: GuruTableProps) {
               required
             />
             <FormField
-              label="Username"
+              label="Username (email login)"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Username untuk login"
+              placeholder={`username@${EMAIL_DOMAIN}`}
             />
             <FormField
               label={editing ? "Password (opsional)" : "Password"}

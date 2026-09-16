@@ -16,10 +16,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { setTitipTugasStatus } from "@/app/admin/actions";
+import { approveTitipTugas, setTitipTugasStatus } from "@/app/admin/actions";
 import { DynamicBlockNoteReadOnly } from "@/components/editor/dynamic-readonly";
 import { cn } from "@/lib/utils";
 
@@ -28,7 +29,14 @@ export type TitipTugasRow = {
   konten: string;
   status: string;
   createdAt: Date;
-  izin: { id: number; jenis: string; tanggal: Date; status: string };
+  izin: {
+    id: number;
+    jenis: string;
+    tanggal: Date;
+    status: string;
+    keterangan: string | null;
+    titipTugas: { id: number; status: string }[];
+  };
   guru: { nama: string };
   kelas: { nama_kelas: string };
   jadwal: {
@@ -64,6 +72,20 @@ export function TitipTugasTable({ rows }: TitipTugasTableProps) {
       if (result?.error) {
         setError(result.error);
       } else {
+        setViewing(null);
+        router.refresh();
+      }
+    });
+  }
+
+  function handleApprove(row: TitipTugasRow) {
+    setError(null);
+    startTransition(async () => {
+      const result = await approveTitipTugas(row.id);
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        setViewing(null);
         router.refresh();
       }
     });
@@ -133,9 +155,9 @@ export function TitipTugasTable({ rows }: TitipTugasTableProps) {
                         variant="ghost"
                         size="icon-sm"
                         className="text-emerald-600"
-                        title="Setujui"
+                        title="Setujui Tugas & Izin"
                         disabled={isPending || row.status === "Disetujui"}
-                        onClick={() => setStatus(row, "Disetujui")}
+                        onClick={() => setViewing(row)}
                       >
                         <Check />
                         <span className="sr-only">Setujui</span>
@@ -170,11 +192,78 @@ export function TitipTugasTable({ rows }: TitipTugasTableProps) {
               {viewing
                 ? `${viewing.guru.nama} • ${viewing.kelas.nama_kelas} • ${
                     viewing.jadwal.mapel?.nama_mapel ?? "-"
-                  }`
+                  } • ${viewing.izin.jenis} ${formatDate(viewing.izin.tanggal)}`
                 : ""}
             </DialogDescription>
           </DialogHeader>
-          {viewing && <DynamicBlockNoteReadOnly initialContent={viewing.konten} />}
+          {viewing && (
+            <div className="grid gap-4">
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium">Status Izin Guru</label>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={statusBadge(viewing.izin.status)}>{viewing.izin.status}</span>
+                  {viewing.izin.keterangan && (
+                    <span className="text-muted-foreground">{viewing.izin.keterangan}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium">
+                  Tugas untuk Siswa ({viewing.izin.titipTugas.length} jadwal)
+                </label>
+                <DynamicBlockNoteReadOnly initialContent={viewing.konten} />
+              </div>
+
+              <div className="grid gap-1">
+                {viewing.izin.titipTugas.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between rounded-md border px-3 py-2"
+                  >
+                    <span className="text-sm font-medium">
+                      {t.id === viewing.id
+                        ? "Titip tugas ini"
+                        : "Titip tugas lain pada izin yang sama"}
+                    </span>
+                    <span className={statusBadge(t.status)}>{t.status}</span>
+                  </div>
+                ))}
+              </div>
+
+              {error && <p className="text-sm text-destructive">{error}</p>}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isPending}
+                  onClick={() => setViewing(null)}
+                >
+                  Tutup
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={isPending || viewing.status === "Ditolak"}
+                  onClick={() => setStatus(viewing, "Ditolak")}
+                >
+                  <X />
+                  Tolak
+                </Button>
+                <Button
+                  type="button"
+                  disabled={isPending || viewing.status === "Disetujui"}
+                  onClick={() => handleApprove(viewing)}
+                >
+                  <Check />
+                  {viewing.status === "Disetujui"
+                    ? "Tugas & Izin Disetujui"
+                    : "Approve Tugas & Izin"}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

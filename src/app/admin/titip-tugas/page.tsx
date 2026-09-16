@@ -6,7 +6,11 @@ export const metadata = { title: "Titip Tugas | Aplikasi Absen" };
 export default async function TitipTugasPage() {
   const rows = await prisma.titipTugas.findMany({
     include: {
-      izin: true,
+      izin: {
+        include: {
+          titipTugas: { select: { id: true, status: true } },
+        },
+      },
       guru: { select: { nama: true } },
       kelas: { select: { nama_kelas: true } },
       jadwal: {
